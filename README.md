@@ -314,3 +314,8 @@ ScureLocalAI/
 - [Architecture](docs/architecture.md)
 - [LLM choice ADR](docs/adr/001-llm-choice.md)
 - [Third-party licenses](THIRD_PARTY_LICENSES.md)
+
+
+## Self Note
+
+- Inspired by [PageIndex](https://github.com/VectifyAI/PageIndex) and [OpenKB](https://github.com/VectifyAI/OpenKB), but **100% offline — no cloud, no API keys, no telemetry**.
