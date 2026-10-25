@@ -297,25 +297,6 @@ ScureLocalAI/
 
 ---
 
-## Legal And Attribution Notes
-
-- Project code is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
-- Third-party Python dependencies, tools, and model references are documented in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-- Ollama is not bundled with this repository. Users install it separately.
-- Model weights are not redistributed in this repository. Users download models through Ollama and are responsible for complying with each model's license.
-- Uploaded documents are user-provided content. Users are responsible for ensuring they have the right to process and store the files they upload.
-
----
-
-## Related Documentation
-
-- [Running the app](RUNNING.md)
-- [Setup guide](docs/setup.md)
-- [Architecture](docs/architecture.md)
-- [LLM choice ADR](docs/adr/001-llm-choice.md)
-- [Third-party licenses](THIRD_PARTY_LICENSES.md)
-
-
 ## Self Note
 
 - Inspired by [PageIndex](https://github.com/VectifyAI/PageIndex) and [OpenKB](https://github.com/VectifyAI/OpenKB), but **100% offline — no cloud, no API keys, no telemetry**.
