@@ -21,3 +21,12 @@ storage:
 server:
   host: 127.0.0.1
   port: 8000
+
+vision:                             # Visualizing.py - locating images / charts / diagrams in PDFs
+  output_dir: data/figures          # figures.json, crops and annotated pages are written here
+  crop_dpi: 150                     # resolution of saved figure crops (what the VLM will see)
+  min_side_pt: 28                   # ignore visuals smaller than this (icons, bullets)
+  cluster_gap_pt: 9                 # vector strokes closer than this form one figure
+  vector_min_score: 0.45            # raise to be stricter about vector charts/diagrams
+  drop_recurring: true              # drop logos repeated on 3+ pages
+  raster_enabled: true              # pixel analysis for scanned pages
