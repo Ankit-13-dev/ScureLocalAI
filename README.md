@@ -25,6 +25,7 @@ This repository is public so others can inspect, run, fork, and build on the loc
 - Retrieve relevant chunks with ChromaDB
 - Answer questions with a local Ollama chat model
 - Return source filenames with answers
+- Find pictures, charts, graphs and diagrams in uploaded PDFs and show them in chat on request ("show me the workflow diagram", "show me Fig. 3")
 - Refuse answers when retrieved context is insufficient
 - Run the frontend without a JavaScript build step
 
@@ -186,6 +187,25 @@ If the retrieved context is insufficient, it should respond:
 I could not find relevant information in the knowledge base.
 ```
 
+### Ask For Images
+
+Pictures inside uploaded PDFs (photos, bar/pie/line charts, diagrams, flowcharts, scanned figures) are detected, cropped and indexed automatically on upload. Then you can ask:
+
+- `show me the workflow diagram`
+- `give me Fig. 3`
+- `send the graph about face area`
+- `what does Fig. 2 show?` (normal answer, with the picture attached)
+
+The chat displays the stored crop with its caption, document and page. The assistant only **retrieves** pictures that exist in your documents; it never generates new ones, and it says so when nothing matches. Documents uploaded before this feature existed can be indexed with the **Scan images** button. Scanned PDFs work through pixel analysis. Images inside `.docx` / `.pptx` files are not indexed yet.
+
+Optional: let a local vision model write a description for pictures that have no caption (helps queries like "the picture with the bird"):
+
+```bash
+ollama pull qwen2.5vl:3b
+```
+
+then set `figures.describe_mode: uncaptioned` in `config.yaml`. This makes PDF uploads slower on CPU.
+
 ---
 
 ## API Summary
@@ -194,8 +214,11 @@ I could not find relevant information in the knowledge base.
 |---|---|---|
 | `POST` | `/api/documents` | Upload and index a document |
 | `GET` | `/api/documents` | List indexed documents |
-| `DELETE` | `/api/documents/{id}` | Delete a document and its chunks |
-| `POST` | `/api/query` | Ask a question against indexed documents |
+| `DELETE` | `/api/documents/{id}` | Delete a document, its chunks and its cropped images |
+| `POST` | `/api/documents/rescan-images` | Index pictures of PDFs uploaded earlier |
+| `POST` | `/api/query` | Ask a question; response includes `answer`, `sources` and `images` |
+| `GET` | `/api/figures` | List indexed pictures |
+| `GET` | `/api/figures/{doc_id}/{figure_id}/image` | The cropped PNG of one picture |
 
 See [docs/architecture.md](docs/architecture.md) for the data flow.
 
@@ -231,7 +254,14 @@ retrieval:
   chunk_size: 512
   chunk_overlap: 64
   top_k: 5
+
+figures:
+  enabled: true
+  describe_mode: "off"   # off | uncaptioned | all
+  max_images: 3
 ```
+
+Detection tuning for pictures lives under `vision:` (see `backend/ingestion/Visualizing.py`).
 
 ---
 
@@ -289,13 +319,33 @@ ScureLocalAI/
 ## Known Limitations
 
 - This is an early alpha, not a production-grade document management system.
-- OCR for scanned/image-only PDFs is not implemented.
+- OCR for scanned/image-only PDFs is not implemented (pictures on scanned pages are still located, but their text is not read).
+- Image retrieval depends on captions, nearby text and (optionally) vision-model descriptions; uncaptioned pictures can be missed unless `figures.describe_mode` is enabled. Match thresholds in `config.yaml` may need tuning for your documents.
 - Parser quality varies by file type and document layout.
 - Very large documents may take time to parse, embed, and store.
 - Model quality depends on the selected Ollama model and local hardware.
 - The app is designed for single-user local use, not multi-user hosting.
 
 ---
+
+## Legal And Attribution Notes
+
+- Project code is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+- Third-party Python dependencies, tools, and model references are documented in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+- Ollama is not bundled with this repository. Users install it separately.
+- Model weights are not redistributed in this repository. Users download models through Ollama and are responsible for complying with each model's license.
+- Uploaded documents are user-provided content. Users are responsible for ensuring they have the right to process and store the files they upload.
+
+---
+
+## Related Documentation
+
+- [Running the app](RUNNING.md)
+- [Setup guide](docs/setup.md)
+- [Architecture](docs/architecture.md)
+- [LLM choice ADR](docs/adr/001-llm-choice.md)
+- [Third-party licenses](THIRD_PARTY_LICENSES.md)
+
 
 ## Self Note
 

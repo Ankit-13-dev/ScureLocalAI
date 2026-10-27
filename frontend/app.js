@@ -3,6 +3,7 @@ const fileInput = document.querySelector("#file-input");
 const dropZone = document.querySelector("#drop-zone");
 const uploadStatus = document.querySelector("#upload-status");
 const refreshButton = document.querySelector("#refresh-documents");
+const scanButton = document.querySelector("#scan-images");
 const messages = document.querySelector("#messages");
 const chatForm = document.querySelector("#chat-form");
 const questionInput = document.querySelector("#question-input");
@@ -27,7 +28,40 @@ function escapeText(value) {
   return element.innerHTML;
 }
 
-function appendMessage(role, text, sources = []) {
+function renderImages(images) {
+  const gallery = document.createElement("div");
+  gallery.className = "message-images";
+  for (const image of images) {
+    const figure = document.createElement("figure");
+    figure.className = "message-figure";
+
+    const link = document.createElement("a");
+    link.href = image.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.title = "Open full size";
+
+    const picture = document.createElement("img");
+    picture.src = image.url;
+    picture.loading = "lazy";
+    picture.alt = image.caption || `Image from ${image.filename}, page ${image.page}`;
+    picture.addEventListener("error", () => {
+      figure.classList.add("broken");
+      figure.textContent = "Image could not be loaded.";
+    });
+    link.appendChild(picture);
+    figure.appendChild(link);
+
+    const caption = document.createElement("figcaption");
+    const where = `${image.filename}, page ${image.page}`;
+    caption.textContent = image.caption ? `${image.caption} (${where})` : where;
+    figure.appendChild(caption);
+    gallery.appendChild(figure);
+  }
+  return gallery;
+}
+
+function appendMessage(role, text, sources = [], images = []) {
   const article = document.createElement("article");
   article.className = `message ${role}`;
 
@@ -35,6 +69,10 @@ function appendMessage(role, text, sources = []) {
   body.className = "message-body";
   const uniqueSources = uniqueValues(sources);
   body.textContent = uniqueSources.length > 0 ? stripTrailingSources(text) : text;
+
+  if (images.length > 0) {
+    body.appendChild(renderImages(images));
+  }
 
   if (uniqueSources.length > 0) {
     const sourceBox = document.createElement("div");
@@ -71,7 +109,9 @@ function renderDocuments(documents) {
     item.innerHTML = `
       <div>
         <div class="document-name">${escapeText(documentRecord.filename)}</div>
-        <div class="document-meta">${documentRecord.chunks} chunks</div>
+        <div class="document-meta">${documentRecord.chunks} chunks${
+          documentRecord.figures ? ` · ${documentRecord.figures} images` : ""
+        }</div>
       </div>
       <button class="document-delete" type="button" data-id="${escapeText(documentRecord.id)}">Delete</button>
     `;
@@ -103,7 +143,8 @@ async function uploadDocument(file) {
   }
 
   const result = await response.json();
-  setStatus(`Indexed ${result.filename} (${result.chunks} chunks).`, "success");
+  const imageNote = result.figures ? `, ${result.figures} images` : "";
+  setStatus(`Indexed ${result.filename} (${result.chunks} chunks${imageNote}).`, "success");
 }
 
 async function uploadFiles(files) {
@@ -139,7 +180,7 @@ async function sendQuery(question) {
     }
     const result = await response.json();
     pending.remove();
-    appendMessage("assistant", result.answer, result.sources || []);
+    appendMessage("assistant", result.answer, result.sources || [], result.images || []);
   } finally {
     sendButton.disabled = false;
     questionInput.focus();
@@ -180,6 +221,25 @@ refreshButton.addEventListener("click", async () => {
     await loadDocuments();
   } catch (error) {
     setStatus(error.message, "error");
+  }
+});
+
+scanButton.addEventListener("click", async () => {
+  scanButton.disabled = true;
+  setStatus("Scanning documents for images...", "busy");
+  try {
+    const response = await fetch("/api/documents/rescan-images", { method: "POST" });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || `Scan failed: ${response.status}`);
+    }
+    const result = await response.json();
+    await loadDocuments();
+    setStatus(`Indexed ${result.images} images.`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    scanButton.disabled = false;
   }
 });
 

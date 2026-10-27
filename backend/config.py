@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ class StorageSettings:
     documents_dir: Path
     chroma_dir: Path
     chroma_collection: str
+    figures_dir: Path | None = None  # where cropped images live; defaults to <data>/figures
 
 
 @dataclass(frozen=True)
@@ -47,12 +48,31 @@ class ServerSettings:
 
 
 @dataclass(frozen=True)
+class FigureSettings:
+    """Image retrieval: detect pictures in PDFs, index them, and show them in chat."""
+
+    enabled: bool = True
+    describe_mode: str = "off"            # off | uncaptioned | all  (local vision model descriptions)
+    vlm_model: str = "qwen2.5vl:3b"       # any Ollama vision model
+    vlm_base_url: str = ""                # empty -> reuse llm.base_url
+    vlm_timeout_s: float = 240.0
+    max_images: int = 3                   # images returned per answer
+    semantic_max_distance: float = 0.40   # no shared keywords: accept a match only this close (cosine distance)
+    min_keyword_overlap: float = 0.34     # share of the question's keywords found in the figure text
+
+
+@dataclass(frozen=True)
 class Settings:
     llm: LlmSettings
     embeddings: EmbeddingSettings
     retrieval: RetrievalSettings
     storage: StorageSettings
     server: ServerSettings
+    figures: FigureSettings = field(default_factory=FigureSettings)
+
+    @property
+    def figures_root(self) -> Path:
+        return self.storage.figures_dir or (self.storage.chroma_dir.parent / "figures")
 
 
 def _project_path(value: str) -> Path:
@@ -76,6 +96,8 @@ def get_settings() -> Settings:
     retrieval = data.get("retrieval", {})
     storage = data.get("storage", {})
     server = data.get("server", {})
+    figures = data.get("figures", {}) or {}
+    figure_defaults = FigureSettings()
 
     return Settings(
         llm=LlmSettings(
@@ -97,10 +119,21 @@ def get_settings() -> Settings:
             documents_dir=_project_path(str(storage.get("documents_dir", "data/documents"))),
             chroma_dir=_project_path(str(storage.get("chroma_dir", "data/chroma_db"))),
             chroma_collection=str(storage.get("chroma_collection", "scurelocalai")),
+            figures_dir=_project_path(str(storage.get("figures_dir", "data/figures"))),
         ),
         server=ServerSettings(
             host=str(server.get("host", "127.0.0.1")),
             port=int(server.get("port", 8000)),
+        ),
+        figures=FigureSettings(
+            enabled=bool(figures.get("enabled", figure_defaults.enabled)),
+            describe_mode=str(figures.get("describe_mode", figure_defaults.describe_mode)).lower(),
+            vlm_model=str(figures.get("vlm_model", figure_defaults.vlm_model)),
+            vlm_base_url=str(figures.get("vlm_base_url", figure_defaults.vlm_base_url)).rstrip("/"),
+            vlm_timeout_s=float(figures.get("vlm_timeout_s", figure_defaults.vlm_timeout_s)),
+            max_images=int(figures.get("max_images", figure_defaults.max_images)),
+            semantic_max_distance=float(figures.get("semantic_max_distance", figure_defaults.semantic_max_distance)),
+            min_keyword_overlap=float(figures.get("min_keyword_overlap", figure_defaults.min_keyword_overlap)),
         ),
     )
 
@@ -109,3 +142,4 @@ def ensure_storage_dirs(settings: Settings | None = None) -> None:
     resolved = settings or get_settings()
     resolved.storage.documents_dir.mkdir(parents=True, exist_ok=True)
     resolved.storage.chroma_dir.mkdir(parents=True, exist_ok=True)
+    resolved.figures_root.mkdir(parents=True, exist_ok=True)

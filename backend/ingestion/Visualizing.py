@@ -92,6 +92,7 @@ __all__ = [
     "detect_figures",
     "detect_figures_in_page",
     "render_region",
+    "save_crops",
     "build_selftest_pdf",
     "run_selftest",
 ]
@@ -1172,11 +1173,13 @@ KIND_COLORS = {  # RGB
 }
 
 
-def save_outputs(pdf_path: Path, result: DocumentResult, out_dir: Path, cfg: VisionConfig, images: bool = True) -> Path:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "figures.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
-    if not images:
-        return out_dir
+def save_crops(pdf_path: Path, result: DocumentResult, out_dir: Path, cfg: VisionConfig) -> int:
+    """Write one PNG per detected figure to ``out_dir/crops/<figure_id>.png``.
+
+    Sets ``FigureRegion.crop_path`` (absolute path) and returns how many crops were written.
+    Used both by the CLI and by the chatbot ingestion pipeline.
+    """
+    written = 0
     doc = pymupdf.open(str(pdf_path))
     try:
         for pr in result.pages:
@@ -1186,9 +1189,29 @@ def save_outputs(pdf_path: Path, result: DocumentResult, out_dir: Path, cfg: Vis
             _normalise_rotation(page)
             for fig in pr.figures:
                 crop_file = out_dir / "crops" / f"{fig.figure_id}.png"
-                _write_png(crop_file, _render(page, fig.bbox, cfg.crop_dpi))
+                pad = 3.0  # a few points of margin so edge strokes / glyphs are never clipped
+                page_box = (page.rect.x0, page.rect.y0, page.rect.x1, page.rect.y1)
+                _write_png(crop_file, _render(page, _clip(_expand(fig.bbox, pad), page_box), cfg.crop_dpi))
                 fig.crop_path = str(crop_file)
-            # annotated page preview
+                written += 1
+    finally:
+        doc.close()
+    return written
+
+
+def save_outputs(pdf_path: Path, result: DocumentResult, out_dir: Path, cfg: VisionConfig, images: bool = True) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not images:
+        (out_dir / "figures.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+        return out_dir
+    save_crops(pdf_path, result, out_dir, cfg)
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        for pr in result.pages:
+            if not pr.figures:
+                continue
+            page = doc[pr.page - 1]
+            _normalise_rotation(page)
             preview = _render(page, None, cfg.annotate_dpi)
             sc = cfg.annotate_dpi / 72.0
             bgr = cv2.cvtColor(preview, cv2.COLOR_RGB2BGR)
@@ -1201,7 +1224,6 @@ def save_outputs(pdf_path: Path, result: DocumentResult, out_dir: Path, cfg: Vis
             _write_png(out_dir / f"page_{pr.page:03d}_annotated.png", cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
     finally:
         doc.close()
-    # crop_path values were filled in -> rewrite JSON so it references the crops
     (out_dir / "figures.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     return out_dir
 

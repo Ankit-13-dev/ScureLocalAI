@@ -39,6 +39,17 @@ Local AI/Data Layer
 6. Chunks, embeddings, and metadata are stored in ChromaDB collection `scurelocalai`.
 7. API returns `{id, filename, chunks}`.
 
+### Image Indexing (PDF only)
+
+After the text is stored, `backend/ingestion/figures.py` runs `Visualizing.py` on the PDF:
+
+1. Detect pictures: embedded images, vector charts/diagrams, and (for scanned pages) pixel analysis.
+2. Save one PNG crop per picture to `data/figures/<doc_id>/crops/`.
+3. Build search text: caption + sentences citing "Fig. N" + nearby text (+ optional local vision-model description).
+4. Embed it and store it in the ChromaDB collection `scurelocalai_figures` with page, caption and crop path.
+
+A failure here never blocks text indexing.
+
 ### Query
 
 1. User submits a question to `POST /api/query`.
@@ -47,7 +58,15 @@ Local AI/Data Layer
 4. Retrieved chunks are injected into the strict RAG system prompt.
 5. Ollama `qwen3:4b` generates an answer.
 6. Backend enforces source citation if the model omits it.
-7. API returns `{answer, sources}`.
+7. API returns `{answer, sources, images}`.
+
+**Image requests.** `backend/retrieval/figure_search.py` classifies the question:
+
+- *Explicit request* ("show me the workflow diagram", "give me Fig. 3"): the matching crops are the answer and the LLM is not called. A figure number is an exact lookup; otherwise a picture must share keywords with the question or be semantically very close, so unrelated pictures are never returned. If nothing matches, the reply says so.
+- *Figure reference* ("what does Fig. 3 show?"): normal LLM answer, with the picture attached and its caption added to the context.
+- Anything else: unchanged text-only answer.
+
+The browser loads each picture from `GET /api/figures/{doc_id}/{figure_id}/image`.
 
 ---
 

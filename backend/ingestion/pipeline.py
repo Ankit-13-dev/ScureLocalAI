@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from backend.config import Settings, get_settings
 from backend.ingestion.chunker import chunk_text
+from backend.ingestion.figures import ingest_figures
 from backend.ingestion.parsers import parse_docx, parse_pdf, parse_pptx, parse_text
 from backend.retrieval.embedder import embed
 from backend.retrieval.store import ChromaStore, get_store
 
+
+logger = logging.getLogger(__name__)
 
 PARSERS = {
     ".pdf": parse_pdf,
@@ -38,5 +42,13 @@ async def ingest_document(
         overlap=resolved.retrieval.chunk_overlap,
     )
     embeddings = await embed([chunk["text"] for chunk in chunks], resolved.embeddings)
-    (store or get_store()).add_chunks(doc_id, filename, chunks, embeddings)
+    target_store = store or get_store()
+    target_store.add_chunks(doc_id, filename, chunks, embeddings)
+
+    # Pictures are an add-on: if detection or embedding fails, text search must still work.
+    if suffix == ".pdf":
+        try:
+            await ingest_figures(file_path, doc_id, filename, settings=resolved, store=target_store)
+        except Exception:  # noqa: BLE001
+            logger.exception("Image indexing failed for %s; the text was indexed normally", filename)
     return len(chunks)

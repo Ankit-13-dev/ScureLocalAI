@@ -297,3 +297,41 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.heading-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.message-figure {
+  margin: 0;
+  max-width: min(100%, 420px);
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.message-figure img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+}
+
+.message-figure figcaption {
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  opacity: 0.8;
+}
+
+.message-figure.broken {
+  padding: 10px;
+  font-size: 0.85rem;
+}

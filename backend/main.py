@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.config import ROOT_DIR, ensure_storage_dirs, get_settings
 from backend.retrieval.store import get_store
 from backend.routers.documents import router as documents_router
+from backend.routers.figures import router as figures_router
 from backend.routers.query import router as query_router
 
 
@@ -19,6 +20,7 @@ app = FastAPI(title="ScureLocalAI", version="0.1.0")
 
 app.include_router(documents_router, prefix="/api")
 app.include_router(query_router, prefix="/api")
+app.include_router(figures_router, prefix="/api")
 
 
 @app.on_event("startup")

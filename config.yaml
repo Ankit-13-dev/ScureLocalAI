@@ -17,6 +17,7 @@ storage:
   documents_dir: data/documents
   chroma_dir: data/chroma_db
   chroma_collection: scurelocalai
+  figures_dir: data/figures         # cropped images shown in chat
 
 server:
   host: 127.0.0.1
@@ -30,3 +31,11 @@ vision:                             # Visualizing.py - locating images / charts 
   vector_min_score: 0.45            # raise to be stricter about vector charts/diagrams
   drop_recurring: true              # drop logos repeated on 3+ pages
   raster_enabled: true              # pixel analysis for scanned pages
+
+figures:                            # images in chat: "show me the workflow diagram"
+  enabled: true                     # detect + index pictures when a PDF is uploaded
+  describe_mode: "off"              # off | uncaptioned | all - local vision model writes descriptions
+  vlm_model: qwen2.5vl:3b           # only used when describe_mode is not off (ollama pull <model>)
+  max_images: 3                     # images returned per answer
+  min_keyword_overlap: 0.34         # a figure matches if this share of the question's keywords is in its text
+  semantic_max_distance: 0.40       # ...or if its meaning is this close to the question (0 = identical)

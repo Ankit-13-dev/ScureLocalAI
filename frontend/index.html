@@ -26,7 +26,10 @@
         <section class="document-section" aria-label="Indexed documents">
           <div class="section-heading">
             <h2>Documents</h2>
-            <button id="refresh-documents" type="button" title="Refresh documents">Refresh</button>
+            <span class="heading-actions">
+              <button id="scan-images" type="button" title="Find pictures in documents uploaded earlier">Scan images</button>
+              <button id="refresh-documents" type="button" title="Refresh documents">Refresh</button>
+            </span>
           </div>
           <ul id="document-list" class="document-list"></ul>
         </section>
@@ -36,7 +39,7 @@
         <div id="messages" class="messages" aria-live="polite">
           <article class="message assistant">
             <div class="message-body">
-              Ask a question about your indexed documents.
+              Ask a question about your indexed documents, or ask for an image (for example: &quot;show me the workflow diagram&quot;).
             </div>
           </article>
         </div>
