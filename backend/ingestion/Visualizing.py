@@ -1437,6 +1437,12 @@ def run_selftest(verbose: bool = True, cfg: Optional[VisionConfig] = None) -> bo
 # =============================================================================
 # CLI
 # =============================================================================
+def _safe_dirname(name: str, limit: int = 80) -> str:
+    """Folder name that is valid on every OS (Windows rejects/mangles spaces, ';', trailing dots...)."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._ ")
+    return cleaned[:limit].rstrip("._ ") or "document"
+
+
 def _default_pdfs() -> list:
     d = load_vision_config().output_dir.parent / "documents"
     return sorted(d.glob("*.pdf")) if d.exists() else []
@@ -1483,10 +1489,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"Failed on {pdf.name}: {exc}")
             status = 1
             continue
-        out_dir = Path(args.out) if args.out else cfg.output_dir / pdf.stem
-        save_outputs(pdf, result, out_dir, cfg, images=not args.no_images)
+        out_dir = Path(args.out) if args.out else cfg.output_dir / _safe_dirname(pdf.stem)
         print_summary(result)
-        print(f"  output -> {out_dir}")
+        try:
+            save_outputs(pdf, result, out_dir, cfg, images=not args.no_images)
+            print(f"  output -> {out_dir}")
+        except OSError as exc:  # one unwritable folder must not abort the remaining PDFs
+            print(f"  could not write outputs to {out_dir}: {exc}")
+            status = 1
     return status
 
 
