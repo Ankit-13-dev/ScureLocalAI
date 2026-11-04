@@ -39,6 +39,10 @@ Local AI/Data Layer
 6. Chunks, embeddings, and metadata are stored in ChromaDB collection `scurelocalai`.
 7. API returns `{id, filename, chunks}`.
 
+### Scanned Pages (OCR)
+
+For PDFs, `parse_pdf` reads the text layer with pypdf. Pages with no text layer are rendered by PyMuPDF and read by Tesseract (`backend/ingestion/ocr.py`), then chunked like normal text. If Tesseract is not installed the page stays empty and a single warning is logged.
+
 ### Image Indexing (PDF only)
 
 After the text is stored, `backend/ingestion/figures.py` runs `Visualizing.py` on the PDF:
@@ -47,8 +51,27 @@ After the text is stored, `backend/ingestion/figures.py` runs `Visualizing.py` o
 2. Save one PNG crop per picture to `data/figures/<doc_id>/crops/`.
 3. Build search text: caption + sentences citing "Fig. N" + nearby text (+ optional local vision-model description).
 4. Embed it and store it in the ChromaDB collection `scurelocalai_figures` with page, caption and crop path.
+5. If the vision model is available, each crop (shrunk to at most 768 px) is described by it. The description is added to the picture's search text and also stored as a text chunk (`element="figure"`) in the main collection, so normal questions can retrieve it. When such a chunk is retrieved with a close match, the chat shows that picture with the answer.
 
 A failure here never blocks text indexing.
+
+### Document Structure (PDF only)
+
+Before chunks are embedded, `backend/ingestion/structure.py` reads the PDF's chapter/section tree
+(the PDF's own bookmarks if it has them, otherwise headings detected from font size, bold,
+numbering and position; running headers and page numbers are ignored; two-column pages are read
+left column first). Each text chunk then stores `section_id`, `section_title`, `section_path`
+(and `section_ids` when it crosses a heading), and each image record stores the section it sits in.
+The image search text also includes the section path. If detection fails, indexing continues
+without section data.
+
+### Measuring image-to-text linking
+
+`backend/linking/` holds the units (text chunks and images with their sections), the individual
+evidence signals (figure citations such as "Fig. 3", reading-order distance, section, keyword
+overlap), a nearest-text baseline and a first hand-weighted signal linker. `tools/` creates
+labelling templates and reports accuracy against your hand-labelled gold files (`tools/README.md`).
+These do not change chat behaviour yet.
 
 ### Query
 
@@ -59,6 +82,8 @@ A failure here never blocks text indexing.
 5. Ollama `qwen3:4b` generates an answer.
 6. Backend enforces source citation if the model omits it.
 7. API returns `{answer, sources, images}`.
+
+**Simple mode.** The request may carry `mode: "simple"`; the backend then uses a plain-language tutor system prompt instead of the research-assistant prompt. Any other value means normal.
 
 **Image requests.** `backend/retrieval/figure_search.py` classifies the question:
 

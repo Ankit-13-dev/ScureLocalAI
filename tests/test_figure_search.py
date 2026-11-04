@@ -9,6 +9,7 @@ from backend.llm.vision import VisionDescriber
 from backend.retrieval.figure_search import (
     build_image_reply,
     analyze_question,
+    figures_from_description_chunks,
     find_figures,
     keyword_overlap,
 )
@@ -168,3 +169,39 @@ def test_describe_mode_off_and_uncaptioned() -> None:
     assert VisionDescriber(_settings("off")).wants("") is False
     unc = VisionDescriber(_settings("uncaptioned"))
     assert unc.wants("") is True and unc.wants("Fig. 1 something") is False
+
+
+# ------------------------------------------- pictures behind retrieved image descriptions
+class _DescStore:
+    def __init__(self, known):
+        self.known = known
+
+    def get_figure(self, doc_id, figure_id):
+        return dict(self.known[(doc_id, figure_id)]) if (doc_id, figure_id) in self.known else None
+
+
+def _desc_chunk(fig_id, distance, doc="d1", element="figure"):
+    return {"element": element, "figure_id": fig_id, "doc_id": doc, "distance": distance, "text": "x"}
+
+
+def test_close_description_chunks_bring_their_pictures_far_ones_do_not() -> None:
+    known = {("d1", "p001_f01"): record("p001_f01", "Fig. 1", None), ("d1", "p002_f01"): record("p002_f01", "Fig. 2", None)}
+    chunks = [
+        _desc_chunk("p001_f01", 0.25),
+        _desc_chunk("p001_f01", 0.20),            # same picture twice -> once
+        _desc_chunk("p002_f01", 0.55),            # too far
+        _desc_chunk("p001_f01", 0.1, element=None),   # an ordinary text chunk
+        _desc_chunk("p009_f09", 0.1),             # picture no longer exists
+    ]
+
+    found = figures_from_description_chunks(chunks, _DescStore(known), FigureSettings())
+
+    assert [r["figure_id"] for r in found] == ["p001_f01"]
+    assert found[0]["match"] == "description"
+
+
+def test_description_pictures_respect_max_images() -> None:
+    known = {("d1", f"p00{i}_f01"): record(f"p00{i}_f01", "c", None) for i in range(1, 5)}
+    chunks = [_desc_chunk(f"p00{i}_f01", 0.1) for i in range(1, 5)]
+
+    assert len(figures_from_description_chunks(chunks, _DescStore(known), FigureSettings(max_images=2))) == 2

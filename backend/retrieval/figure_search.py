@@ -181,6 +181,34 @@ def find_figures(
     return chosen
 
 
+def figures_from_description_chunks(
+    chunks: list[dict[str, Any]], store: ChromaStore, settings: FigureSettings
+) -> list[dict[str, Any]]:
+    """Pictures whose vision-model description was retrieved as evidence for the answer.
+
+    Only close matches count (same distance limit as a semantic figure match), so a stray,
+    barely related description never drags an unrelated picture into the chat.
+    """
+    found: list[dict[str, Any]] = []
+    seen: set = set()
+    for chunk in chunks:
+        if chunk.get("element") != "figure" or not chunk.get("figure_id") or not chunk.get("doc_id"):
+            continue
+        distance = chunk.get("distance")
+        key = (chunk["doc_id"], chunk["figure_id"])
+        if distance is None or distance > settings.semantic_max_distance or key in seen:
+            continue
+        record = store.get_figure(chunk["doc_id"], chunk["figure_id"])
+        if record is None:
+            continue
+        seen.add(key)
+        record.update(match="description", distance=distance, score=round(max(0.0, 1.0 - float(distance)), 3))
+        found.append(record)
+        if len(found) >= max(1, settings.max_images):
+            break
+    return found
+
+
 # ---------------------------------------------------------------------------- presentation
 def image_url(record: dict[str, Any]) -> str:
     return f"/api/figures/{record['doc_id']}/{record['figure_id']}/image"

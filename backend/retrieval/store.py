@@ -52,6 +52,7 @@ class ChromaStore:
                 "page": int(chunk["page"]),
                 "chunk_index": int(chunk["chunk_index"]),
                 "ingested_at": ingested_at,
+                **self._position_metadata(chunk),
             }
             for chunk in chunks
         ]
@@ -62,6 +63,19 @@ class ChromaStore:
             embeddings=embeddings,
             metadatas=metadatas,
         )
+
+    @staticmethod
+    def _position_metadata(item: dict[str, Any]) -> dict[str, Any]:
+        """Optional section / position fields (only present for PDFs with detected structure)."""
+        meta: dict[str, Any] = {}
+        for key in ("section_id", "section_title", "section_path", "section_source", "section_ids", "element", "figure_id"):
+            if item.get(key):
+                meta[key] = str(item[key])
+        if item.get("block_idx") is not None:
+            meta["block_idx"] = int(item["block_idx"])
+        if item.get("y0") is not None:
+            meta["y0"] = float(item["y0"])
+        return meta
 
     def query(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
         result = self.collection.query(
@@ -85,9 +99,18 @@ class ChromaStore:
                     "page": metadata.get("page"),
                     "chunk_index": metadata.get("chunk_index"),
                     "distance": distance,
+                    "section_id": metadata.get("section_id"),
+                    "section_title": metadata.get("section_title"),
+                    "section_path": metadata.get("section_path"),
+                    "element": metadata.get("element"),       # "figure" for image-description chunks
+                    "figure_id": metadata.get("figure_id"),
                 }
             )
         return chunks
+
+    def delete_figure_chunks(self, doc_id: str) -> None:
+        """Remove only the image-description chunks of a document (text chunks stay)."""
+        self.collection.delete(where={"$and": [{"doc_id": doc_id}, {"element": "figure"}]})
 
     def delete_document(self, doc_id: str) -> None:
         self.collection.delete(where={"doc_id": doc_id})
@@ -127,6 +150,7 @@ class ChromaStore:
                     "source": str(fig.get("source", "")),
                     "confidence": float(fig.get("confidence", 0.0)),
                     "ingested_at": ingested_at,
+                    **self._position_metadata(fig),
                 }
                 for fig in figures
             ],
@@ -153,6 +177,10 @@ class ChromaStore:
             "crop_file": metadata.get("crop_file", ""),
             "bbox": bbox,
             "distance": distance,
+            "section_id": metadata.get("section_id"),
+            "section_title": metadata.get("section_title"),
+            "section_path": metadata.get("section_path"),
+            "block_idx": metadata.get("block_idx"),
         }
 
     def query_figures(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
@@ -226,7 +254,8 @@ class ChromaStore:
             record["id"] = doc_id
             record["filename"] = metadata.get("filename", "")
             record["ingested_at"] = metadata.get("ingested_at", "")
-            record["chunks"] += 1
+            if metadata.get("element") != "figure":  # image descriptions are not text chunks
+                record["chunks"] += 1
 
         return sorted(documents.values(), key=lambda item: str(item["ingested_at"]), reverse=True)
 

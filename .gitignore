@@ -50,3 +50,6 @@ models/
 # OS
 desktop.ini
 ehthumbs.db
+
+# image-linking review crops (the *.gold.json label files are meant to be committed)
+gold/*_review/

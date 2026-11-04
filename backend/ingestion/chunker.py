@@ -3,10 +3,24 @@ from __future__ import annotations
 from typing import TypedDict
 
 
-class Chunk(TypedDict):
+class _ChunkBase(TypedDict):
     text: str
     page: int
     chunk_index: int
+
+
+class Chunk(_ChunkBase, total=False):
+    """Optional fields are added for PDFs by structure.annotate_chunks()."""
+
+    section_id: str
+    section_title: str
+    section_path: str
+    section_ids: str      # all sections the chunk touches, best first (only when more than one)
+    element: str          # "figure" for chunks that hold a vision-model image description
+    figure_id: str
+    section_source: str   # "matched" | "inherited"
+    block_idx: int        # reading-order index of the block where the chunk starts
+    y0: float
 
 
 def chunk_text(pages: list[str], chunk_size: int, overlap: int) -> list[Chunk]:

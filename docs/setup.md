@@ -142,4 +142,18 @@ py -3.11 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 ### PDF text not extracted
 
-Some scanned PDFs are image-only and have no extractable text. Use a PDF with actual text content.
+Scanned PDFs are image-only and have no text layer. They are read with OCR if the Tesseract program is installed (see below). Without it, such pages stay empty.
+
+### Optional: OCR for scanned PDFs (Tesseract)
+
+Install the Tesseract program once (the Python packages come from `requirements.txt`):
+
+- **Windows:** install from <https://github.com/UB-Mannheim/tesseract/wiki>. The default folder `C:\Program Files\Tesseract-OCR` is found automatically; otherwise set `ocr.tesseract_cmd` in `config.yaml`.
+- **macOS:** `brew install tesseract`
+- **Linux:** `sudo apt install tesseract-ocr`
+
+Check with `tesseract --version`. For other languages install the matching language pack and set `ocr.language` (for example `eng+hin`).
+
+### Optional: image descriptions (vision model)
+
+`ollama pull qwen2.5vl:3b` (about 3 GB). Pictures are then described on upload so they can be found and answered about. If the model is missing, uploads still work and descriptions are skipped.

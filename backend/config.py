@@ -59,6 +59,30 @@ class FigureSettings:
     max_images: int = 3                   # images returned per answer
     semantic_max_distance: float = 0.40   # no shared keywords: accept a match only this close (cosine distance)
     min_keyword_overlap: float = 0.34     # share of the question's keywords found in the figure text
+    describe_prompt: str = "detailed"     # detailed (people, colours, text, labels) | brief (2-3 sentences)
+    vlm_max_px: int = 768                 # longest side sent to the vision model (smaller = faster)
+    index_descriptions: bool = True       # also store descriptions as searchable text so ordinary questions find them
+
+
+@dataclass(frozen=True)
+class OcrSettings:
+    """Text recognition for scanned PDF pages that have no text layer (needs the Tesseract program)."""
+
+    enabled: bool = True
+    language: str = "eng"
+    dpi: int = 300
+    tesseract_cmd: str = ""               # empty -> auto-detect (PATH, then common Windows folders)
+
+
+@dataclass(frozen=True)
+class StructureSettings:
+    """Chapter / section detection for PDFs (see backend/ingestion/structure.py)."""
+
+    enabled: bool = True
+    use_outline: bool = True              # trust the PDF's own bookmarks when present
+    max_heading_words: int = 16
+    min_heading_size_ratio: float = 1.15  # heading font size / body font size
+    max_levels: int = 4
 
 
 @dataclass(frozen=True)
@@ -69,6 +93,8 @@ class Settings:
     storage: StorageSettings
     server: ServerSettings
     figures: FigureSettings = field(default_factory=FigureSettings)
+    structure: StructureSettings = field(default_factory=StructureSettings)
+    ocr: OcrSettings = field(default_factory=OcrSettings)
 
     @property
     def figures_root(self) -> Path:
@@ -98,6 +124,10 @@ def get_settings() -> Settings:
     server = data.get("server", {})
     figures = data.get("figures", {}) or {}
     figure_defaults = FigureSettings()
+    structure = data.get("structure", {}) or {}
+    structure_defaults = StructureSettings()
+    ocr = data.get("ocr", {}) or {}
+    ocr_defaults = OcrSettings()
 
     return Settings(
         llm=LlmSettings(
@@ -134,6 +164,22 @@ def get_settings() -> Settings:
             max_images=int(figures.get("max_images", figure_defaults.max_images)),
             semantic_max_distance=float(figures.get("semantic_max_distance", figure_defaults.semantic_max_distance)),
             min_keyword_overlap=float(figures.get("min_keyword_overlap", figure_defaults.min_keyword_overlap)),
+            describe_prompt=str(figures.get("describe_prompt", figure_defaults.describe_prompt)).lower(),
+            vlm_max_px=int(figures.get("vlm_max_px", figure_defaults.vlm_max_px)),
+            index_descriptions=bool(figures.get("index_descriptions", figure_defaults.index_descriptions)),
+        ),
+        structure=StructureSettings(
+            enabled=bool(structure.get("enabled", structure_defaults.enabled)),
+            use_outline=bool(structure.get("use_outline", structure_defaults.use_outline)),
+            max_heading_words=int(structure.get("max_heading_words", structure_defaults.max_heading_words)),
+            min_heading_size_ratio=float(structure.get("min_heading_size_ratio", structure_defaults.min_heading_size_ratio)),
+            max_levels=int(structure.get("max_levels", structure_defaults.max_levels)),
+        ),
+        ocr=OcrSettings(
+            enabled=bool(ocr.get("enabled", ocr_defaults.enabled)),
+            language=str(ocr.get("language", ocr_defaults.language)),
+            dpi=int(ocr.get("dpi", ocr_defaults.dpi)),
+            tesseract_cmd=str(ocr.get("tesseract_cmd", ocr_defaults.tesseract_cmd)),
         ),
     )
 

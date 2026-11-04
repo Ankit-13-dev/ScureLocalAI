@@ -25,6 +25,7 @@ from backend.config import (  # noqa: E402
     get_settings,
 )
 from backend.ingestion.Visualizing import build_selftest_pdf  # noqa: E402
+from tests.pdf_builders import make_figure_book  # noqa: E402
 from backend.main import app  # noqa: E402
 from backend.retrieval.store import ChromaStore, get_store  # noqa: E402
 
@@ -53,9 +54,11 @@ def client(tmp_path: Path, monkeypatch):
         return [hash_embedding(t) for t in texts]
 
     calls: list[str] = []
+    modes: list[str] = []
 
-    async def fake_answer(question, chunks, _settings=None):
+    async def fake_answer(question, chunks, _settings=None, mode="normal"):
         calls.append(question)
+        modes.append(mode)
         return "LLM ANSWER"
 
     monkeypatch.setattr("backend.ingestion.pipeline.embed", fake_embed)
@@ -67,6 +70,7 @@ def client(tmp_path: Path, monkeypatch):
     app.dependency_overrides[get_store] = lambda: store
     test_client = TestClient(app)
     test_client.llm_calls = calls  # type: ignore[attr-defined]
+    test_client.llm_modes = modes  # type: ignore[attr-defined]
     test_client.settings = settings  # type: ignore[attr-defined]
     test_client.store = store  # type: ignore[attr-defined]
     yield test_client
@@ -210,3 +214,133 @@ def test_text_only_files_are_unaffected(client, tmp_path) -> None:
     assert response.status_code == 201
     assert response.json()["figures"] == 0
     assert ask(client, "What is alpha?")["images"] == []
+
+
+def test_upload_stores_section_info_for_chunks_and_images(client, tmp_path) -> None:
+    pdf = make_figure_book(tmp_path / "figbook.pdf")
+    doc = upload(client, pdf)
+
+    chunk_meta = client.store.collection.get(where={"doc_id": doc["id"]}, include=["metadatas"])["metadatas"]
+    assert chunk_meta and all("section_title" in m for m in chunk_meta)
+    assert {m["section_title"] for m in chunk_meta} == {"1 Introduction", "2 Results"}
+
+    (figure,) = client.store.list_figures(doc["id"])
+    assert figure["section_title"] == "1 Introduction" and figure["section_path"] == "1 Introduction"
+    assert "Section: 1 Introduction" in figure["text"]
+
+    # chat still answers, and retrieved chunks now carry their section
+    body = ask(client, "What happened to the glacier front?")
+    assert body["answer"] == "LLM ANSWER"
+
+
+def test_structure_failure_never_blocks_indexing(client, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("backend.ingestion.pipeline.safe_extract_structure", lambda *a, **k: None)
+    monkeypatch.setattr("backend.ingestion.figures.safe_extract_structure", lambda *a, **k: None)
+    doc = upload(client, make_figure_book(tmp_path / "figbook.pdf"))
+
+    assert doc["chunks"] > 0 and doc["figures"] == 1
+    meta = client.store.collection.get(where={"doc_id": doc["id"]}, include=["metadatas"])["metadatas"]
+    assert all("section_id" not in m for m in meta)
+    assert "section_path" not in client.store.list_figures(doc["id"])[0] or not client.store.list_figures(doc["id"])[0]["section_path"]
+
+
+# ------------------------------------------------------------------ simple (tutor) mode
+def test_mode_is_passed_to_the_language_model(client) -> None:
+    ask(client, "What is the capital of France?")
+    response = client.post("/api/query", json={"question": "What is photosynthesis?", "mode": "simple"})
+
+    assert response.status_code == 200
+    assert client.llm_modes == ["normal", "simple"]
+
+
+# ------------------------------------------------- image descriptions as searchable text
+@pytest.fixture()
+def describing_client(client, monkeypatch):
+    """Same app, but with the vision model 'on' and its replies stubbed."""
+    from dataclasses import replace
+
+    from backend.config import FigureSettings
+
+    settings = replace(client.settings, figures=FigureSettings(describe_mode="all", semantic_max_distance=0.7))
+    app.dependency_overrides[get_settings] = lambda: settings
+    client.settings = settings
+
+    async def fake_describe(self, image_png):
+        return "PEOPLE: 3 children wearing GREEN tops stand in a classroom. OBJECTS: a blackboard."
+
+    monkeypatch.setattr("backend.llm.vision.VisionDescriber.describe", fake_describe)
+    return client
+
+
+def _description_chunks(client, doc_id):
+    got = client.store.collection.get(where={"$and": [{"doc_id": doc_id}, {"element": "figure"}]}, include=["documents", "metadatas"])
+    return got["documents"], got["metadatas"]
+
+
+def test_descriptions_become_searchable_text_and_are_stored_with_the_picture(describing_client, tmp_path) -> None:
+    client = describing_client
+    doc = upload(client, make_figure_book(tmp_path / "figbook.pdf"))
+
+    texts, metas = _description_chunks(client, doc["id"])
+    assert len(texts) == 1 and "3 children wearing GREEN tops" in texts[0]
+    assert metas[0]["element"] == "figure" and metas[0]["figure_id"].startswith("p001")
+    (figure,) = client.store.list_figures(doc["id"])
+    assert "3 children wearing GREEN tops" in figure["description"]
+
+    documents = client.get("/api/documents").json()
+    chunk_total = len(client.store.collection.get(where={"doc_id": doc["id"]})["ids"])
+    assert documents[0]["chunks"] == chunk_total - 1 == doc["chunks"]   # descriptions are not counted as text chunks
+
+
+def test_a_question_answered_from_a_description_shows_that_picture(describing_client, tmp_path) -> None:
+    client = describing_client
+    upload(client, make_figure_book(tmp_path / "figbook.pdf"))
+
+    body = ask(client, "3 children wearing GREEN tops in a classroom with a blackboard")
+
+    assert body["answer"].startswith("LLM ANSWER")
+    assert [(i["match"], i["page"]) for i in body["images"]] == [("description", 1)]
+    assert client.get(body["images"][0]["url"]).status_code == 200
+
+
+def test_rescan_replaces_descriptions_instead_of_duplicating_them(describing_client, tmp_path) -> None:
+    client = describing_client
+    doc = upload(client, make_figure_book(tmp_path / "figbook.pdf"))
+
+    client.post("/api/documents/rescan-images")
+    client.post("/api/documents/rescan-images")
+
+    assert len(_description_chunks(client, doc["id"])[0]) == 1
+
+
+def test_deleting_a_document_removes_its_description_chunks(describing_client, tmp_path) -> None:
+    client = describing_client
+    doc = upload(client, make_figure_book(tmp_path / "figbook.pdf"))
+
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 204
+
+    assert _description_chunks(client, doc["id"])[0] == []
+
+
+def test_description_failure_leaves_text_and_pictures_intact(client, tmp_path, monkeypatch) -> None:
+    from dataclasses import replace
+
+    from backend.config import FigureSettings
+
+    settings = replace(client.settings, figures=FigureSettings(describe_mode="all"))
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    def refuse(request):
+        import httpx
+
+        return httpx.Response(404, json={"error": "model not found"})
+
+    import httpx
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr("backend.llm.vision.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(refuse), **kw))
+
+    doc = upload(client, make_figure_book(tmp_path / "figbook.pdf"))
+
+    assert doc["chunks"] > 0 and doc["figures"] == 1
+    assert _description_chunks(client, doc["id"])[0] == []

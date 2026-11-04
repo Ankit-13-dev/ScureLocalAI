@@ -6,7 +6,16 @@ def parse_pdf(path: Path) -> list[str]:
     from pypdf import PdfReader
 
     reader = PdfReader(str(path))
-    return [(page.extract_text() or "").strip() for page in reader.pages]
+    pages = [(page.extract_text() or "").strip() for page in reader.pages]
+
+    # Scanned pages have no text layer: read them with OCR (offline; skipped if Tesseract is missing).
+    blank = [index for index, text in enumerate(pages) if not text]
+    if blank:
+        from backend.ingestion.ocr import ocr_pdf_pages
+
+        for index, text in ocr_pdf_pages(path, blank).items():
+            pages[index] = f"[Scanned page - OCR]\n{text}"
+    return pages
 
 
 def parse_docx(path: Path) -> list[str]:

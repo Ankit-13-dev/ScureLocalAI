@@ -14,6 +14,7 @@ from backend.retrieval.figure_search import (
     analyze_question,
     build_image_reply,
     figure_context_chunks,
+    figures_from_description_chunks,
     find_figures,
     to_image_ref,
 )
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/query", tags=["query"])
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1)
     k: int | None = Field(default=None, ge=1, le=20)
+    mode: str = Field(default="normal")  # "normal" (research assistant) or "simple" (plain-language tutor)
 
 
 class ImageRef(BaseModel):
@@ -90,10 +92,20 @@ async def query_knowledge_base(
         else:
             chunks = store.query(question_embedding, request.k or settings.retrieval.top_k)
             context = chunks + figure_context_chunks(figures)
-            answer = await answer_query(question, context, settings.llm)
+            answer = await answer_query(question, context, settings.llm, mode=request.mode)
             if intent.wants_images and not figures:
                 answer = f"{answer}\n\n({IMAGE_NOT_FOUND_MESSAGE})"
             sources = _sources(context)
+            # Show the picture behind a retrieved image description (e.g. "how many children...?").
+            if settings.figures.enabled:
+                try:
+                    known = {(f["doc_id"], f["figure_id"]) for f in figures}
+                    extra = figures_from_description_chunks(chunks, store, settings.figures)
+                    figures = (figures + [f for f in extra if (f["doc_id"], f["figure_id"]) not in known])[
+                        : max(1, settings.figures.max_images)
+                    ]
+                except Exception:  # noqa: BLE001
+                    logger.exception("Could not attach pictures for retrieved descriptions")
     except HTTPException:
         raise
     except Exception as exc:

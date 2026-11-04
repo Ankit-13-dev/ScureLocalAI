@@ -4,6 +4,11 @@ const dropZone = document.querySelector("#drop-zone");
 const uploadStatus = document.querySelector("#upload-status");
 const refreshButton = document.querySelector("#refresh-documents");
 const scanButton = document.querySelector("#scan-images");
+const simpleModeButton = document.querySelector("#simple-mode-btn");
+
+// "normal" = precise research-assistant answers, "simple" = plain-language tutor answers.
+// Sent with every question so the backend picks the matching system prompt.
+let currentMode = "normal";
 const messages = document.querySelector("#messages");
 const chatForm = document.querySelector("#chat-form");
 const questionInput = document.querySelector("#question-input");
@@ -172,7 +177,7 @@ async function sendQuery(question) {
     const response = await fetch("/api/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, mode: currentMode }),
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
@@ -222,6 +227,14 @@ refreshButton.addEventListener("click", async () => {
   } catch (error) {
     setStatus(error.message, "error");
   }
+});
+
+simpleModeButton.addEventListener("click", () => {
+  const simple = currentMode === "normal";
+  currentMode = simple ? "simple" : "normal";
+  simpleModeButton.textContent = simple ? "Simple: ON" : "Simple";
+  simpleModeButton.classList.toggle("active", simple);
+  simpleModeButton.setAttribute("aria-pressed", String(simple));
 });
 
 scanButton.addEventListener("click", async () => {

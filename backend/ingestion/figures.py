@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import Settings, get_settings
+from backend.ingestion.structure import DocumentStructure, annotate_figures, options_from_settings, safe_extract_structure
 from backend.llm.vision import VisionDescriber
 from backend.retrieval.embedder import embed
 from backend.retrieval.store import ChromaStore, get_store
@@ -84,9 +85,51 @@ def _nearby_text(blocks: list[tuple], bbox: tuple, caption_bbox: tuple | None, l
     return " ".join(text for _gap, text in picked)[:limit]
 
 
-def extract_figures(pdf_path: Path, doc_id: str, filename: str, settings: Settings) -> list[dict[str, Any]]:
-    """Detect pictures, write crops and build the searchable text. Blocking (CPU) work."""
+def figure_records(pdf_path: Path, result: Any, doc_id: str, require_crop: bool = False) -> list[dict[str, Any]]:
+    """Turn Visualizing's detections into plain records (caption number, text that cites the
+    figure, nearby text).  ``require_crop`` skips pictures whose crop file was not written."""
     import pymupdf
+
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        page_texts = [page.get_text("text") for page in doc]
+        records: list[dict[str, Any]] = []
+        for page_result in result.pages:
+            blocks = doc[page_result.page - 1].get_text("blocks") if page_result.figures else []
+            for fig in page_result.figures:
+                if require_crop and (not fig.crop_path or not Path(fig.crop_path).exists()):
+                    continue
+                number = caption_number(fig.caption)
+                records.append(
+                    {
+                        "figure_id": fig.figure_id,
+                        "page": fig.page,
+                        "kind": fig.kind,
+                        "caption": fig.caption or "",
+                        "fig_number": number,
+                        "bbox": fig.bbox,
+                        "source": fig.source,
+                        "confidence": fig.confidence,
+                        "crop_file": f"{doc_id}/crops/{fig.figure_id}.png",
+                        "crop_path": fig.crop_path or "",
+                        "mentions": _mentions(page_texts, number, fig.caption),
+                        "nearby": _nearby_text(blocks, fig.bbox, fig.caption_bbox),
+                        "description": "",
+                    }
+                )
+    finally:
+        doc.close()
+    return records
+
+
+def extract_figures(
+    pdf_path: Path,
+    doc_id: str,
+    filename: str,
+    settings: Settings,
+    structure: DocumentStructure | None = None,
+) -> list[dict[str, Any]]:
+    """Detect pictures, write crops and build the searchable text. Blocking (CPU) work."""
 
     from backend.ingestion.Visualizing import detect_figures, load_vision_config, save_crops
 
@@ -100,37 +143,17 @@ def extract_figures(pdf_path: Path, doc_id: str, filename: str, settings: Settin
         return []
     save_crops(pdf_path, result, out_dir, cfg)
 
-    doc = pymupdf.open(str(pdf_path))
-    try:
-        page_texts = [page.get_text("text") for page in doc]
-        records: list[dict[str, Any]] = []
-        for page_result in result.pages:
-            blocks = doc[page_result.page - 1].get_text("blocks") if page_result.figures else []
-            for fig in page_result.figures:
-                if not fig.crop_path or not Path(fig.crop_path).exists():
-                    continue
-                number = caption_number(fig.caption)
-                mentions = _mentions(page_texts, number, fig.caption)
-                nearby = _nearby_text(blocks, fig.bbox, fig.caption_bbox)
-                records.append(
-                    {
-                        "figure_id": fig.figure_id,
-                        "page": fig.page,
-                        "kind": fig.kind,
-                        "caption": fig.caption or "",
-                        "fig_number": number,
-                        "bbox": fig.bbox,
-                        "source": fig.source,
-                        "confidence": fig.confidence,
-                        "crop_file": f"{doc_id}/crops/{fig.figure_id}.png",
-                        "crop_path": fig.crop_path,
-                        "mentions": mentions,
-                        "nearby": nearby,
-                        "description": "",
-                    }
-                )
-    finally:
-        doc.close()
+    records = figure_records(pdf_path, result, doc_id, require_crop=True)
+
+    # Which chapter / section is each picture in?  (Optional: never lose a picture over it.)
+    if records and settings.structure.enabled:
+        try:
+            if structure is None:
+                structure = safe_extract_structure(pdf_path, options_from_settings(settings.structure))
+            if structure is not None:
+                annotate_figures(structure, records)
+        except Exception:  # noqa: BLE001
+            logger.exception("Section lookup failed for %s; images are indexed without it", filename)
     return records
 
 
@@ -142,6 +165,7 @@ def build_search_text(record: dict[str, Any], filename: str) -> str:
         f"Referred to in the text: {record['mentions']}" if record.get("mentions") else "",
         f"Nearby text: {record['nearby']}" if record.get("nearby") else "",
         f"Page {record.get('page')} of {filename}",
+        f"Section: {record['section_path']}" if record.get("section_id") not in (None, "", "s000") and record.get("section_path") else "",
     ]
     return ". ".join(part.strip() for part in parts if part and part.strip())
 
@@ -152,6 +176,7 @@ async def ingest_figures(
     filename: str,
     settings: Settings | None = None,
     store: ChromaStore | None = None,
+    structure: DocumentStructure | None = None,
 ) -> int:
     """(Re)index every picture of one PDF. Safe to call repeatedly. Returns the number indexed."""
     resolved = settings or get_settings()
@@ -159,8 +184,9 @@ async def ingest_figures(
         return 0
     target = store or get_store()
 
-    records = await asyncio.to_thread(extract_figures, file_path, doc_id, filename, resolved)
+    records = await asyncio.to_thread(extract_figures, file_path, doc_id, filename, resolved, structure)
     target.delete_figures(doc_id)  # drop stale entries from an earlier scan
+    target.delete_figure_chunks(doc_id)
     if not records:
         return 0
 
@@ -174,5 +200,50 @@ async def ingest_figures(
         record["search_text"] = build_search_text(record, filename)
     embeddings = await embed([record["search_text"] for record in records], resolved.embeddings)
     target.add_figures(doc_id, filename, records, embeddings)
+
+    # Also make each description findable by ordinary questions ("how many children are shown?").
+    if resolved.figures.index_descriptions:
+        await _index_description_chunks(records, doc_id, filename, resolved, target)
     logger.info("Indexed %d image(s) from %s", len(records), filename)
     return len(records)
+
+
+DESCRIPTION_CHUNK_BASE = 900_000  # chunk_index range reserved for image descriptions (text chunks use 0..n)
+
+
+async def _index_description_chunks(
+    records: list[dict[str, Any]],
+    doc_id: str,
+    filename: str,
+    settings: Settings,
+    store: ChromaStore,
+) -> None:
+    """Store each vision-model description as a text chunk tagged ``element="figure"``.
+
+    Never raises: a failure here leaves the picture records (and normal text) intact.
+    """
+    chunks: list[dict[str, Any]] = []
+    for record in records:
+        description = str(record.get("description") or "").strip()
+        if not description:
+            continue
+        caption = str(record.get("caption") or "").strip()
+        text = f"[Page {record['page']} - Figure {record['figure_id']}]\n" + (f"{caption}\n" if caption else "") + description
+        chunk: dict[str, Any] = {
+            "text": text,
+            "page": int(record["page"]),
+            "chunk_index": DESCRIPTION_CHUNK_BASE + len(chunks),
+            "element": "figure",
+            "figure_id": record["figure_id"],
+        }
+        for key in ("section_id", "section_title", "section_path", "block_idx"):
+            if record.get(key) is not None:
+                chunk[key] = record[key]
+        chunks.append(chunk)
+    if not chunks:
+        return
+    try:
+        embeddings = await embed([c["text"] for c in chunks], settings.embeddings)
+        store.add_chunks(doc_id, filename, chunks, embeddings)  # type: ignore[arg-type]
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not index image descriptions for %s as text", filename)

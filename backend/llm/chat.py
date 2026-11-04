@@ -19,6 +19,25 @@ If the excerpts do not contain enough information to answer the question, respon
 Always end your answer with a "Sources:" section listing the filenames you used."""
 
 
+SIMPLE_SYSTEM_PROMPT = """You are a friendly tutor helping a student understand their study material.
+
+Rules you must follow:
+1. Use simple everyday language - no jargon. If you must use a technical word, explain it immediately in plain words inside brackets.
+2. Structure your answer as short bullet points or numbered steps - never long dense paragraphs.
+3. Use a real-life analogy or example to make every abstract idea concrete.
+4. Keep each sentence under 20 words.
+5. Answer ONLY using the provided document excerpts - never invent information.
+6. If the excerpts do not contain the answer, say: "I couldn't find this in your uploaded notes. Try asking your teacher or checking another chapter."
+7. End every answer with: "Quick check: [write one simple question the student can ask themselves to confirm they understood]"
+
+Always end with a "Sources:" section listing the filenames you used."""
+
+
+def _pick_system_prompt(mode: str) -> str:
+    """Normal = precise research assistant; "simple" = plain-language tutor."""
+    return SIMPLE_SYSTEM_PROMPT if str(mode).lower() == "simple" else RAG_SYSTEM_PROMPT
+
+
 def _format_context(context_chunks: list[dict[str, Any]]) -> str:
     excerpts: list[str] = []
     for index, chunk in enumerate(context_chunks, start=1):
@@ -58,6 +77,7 @@ async def answer_query(
     question: str,
     context_chunks: list[dict[str, Any]],
     settings: LlmSettings | None = None,
+    mode: str = "normal",
 ) -> str:
     if not context_chunks:
         return NOT_FOUND_MESSAGE
@@ -65,7 +85,7 @@ async def answer_query(
     resolved = settings or get_settings().llm
     context = _format_context(context_chunks)
     messages = [
-        {"role": "system", "content": f"{RAG_SYSTEM_PROMPT}\n\nDocument excerpts:\n{context}"},
+        {"role": "system", "content": f"{_pick_system_prompt(mode)}\n\nDocument excerpts:\n{context}"},
         {"role": "user", "content": question},
     ]
     payload = {
@@ -78,7 +98,8 @@ async def answer_query(
         },
     }
 
-    async with httpx.AsyncClient(timeout=180.0) as client:
+    # 360 s: a larger local model on a modest GPU/CPU with many retrieved chunks can take minutes
+    async with httpx.AsyncClient(timeout=360.0) as client:
         response = await client.post(f"{resolved.base_url}/api/chat", json=payload)
         response.raise_for_status()
         data = response.json()
